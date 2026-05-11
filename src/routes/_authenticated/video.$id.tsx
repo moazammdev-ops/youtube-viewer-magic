@@ -3,11 +3,13 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getVideo, updateRefinedScript, rejectVideo } from "@/lib/pipeline.functions";
+import { generateVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
+import { searchBroll } from "@/lib/broll.functions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Mic, Film } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/video/$id")({
@@ -21,6 +23,9 @@ function VideoDetail() {
   const fetchVideo = useServerFn(getVideo);
   const updateScript = useServerFn(updateRefinedScript);
   const reject = useServerFn(rejectVideo);
+  const genVoice = useServerFn(generateVoiceover);
+  const getVoUrl = useServerFn(getVoiceoverUrl);
+  const searchClips = useServerFn(searchBroll);
 
   const q = useQuery({
     queryKey: ["video", id],
@@ -50,9 +55,35 @@ function VideoDetail() {
     },
   });
 
+  const voMut = useMutation({
+    mutationFn: () => genVoice({ data: { id } }),
+    onSuccess: () => {
+      toast.success("Voiceover generated");
+      qc.invalidateQueries({ queryKey: ["video", id] });
+      qc.invalidateQueries({ queryKey: ["voiceover-url", id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Voiceover failed"),
+  });
+
+  const brollMut = useMutation({
+    mutationFn: () => searchClips({ data: { id } }),
+    onSuccess: (r) => {
+      toast.success(`Found ${r.count} clips`);
+      qc.invalidateQueries({ queryKey: ["video", id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "B-roll failed"),
+  });
+
+  const voUrlQ = useQuery({
+    queryKey: ["voiceover-url", id, q.data?.video?.voiceover_url],
+    queryFn: () => getVoUrl({ data: { id } }),
+    enabled: !!q.data?.video?.voiceover_url,
+  });
+
   if (q.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   const v = q.data?.video;
   if (!v) return <div className="p-6">Not found</div>;
+  const clips = (v.broll_clips ?? []) as Array<{ thumbnail: string; source: string; query: string; duration: number; url: string; id: string }>;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -100,11 +131,54 @@ function VideoDetail() {
         </Card>
       )}
       {v.critique && (
-        <Card>
+        <Card className="mb-4">
           <CardHeader><CardTitle>AI critique</CardTitle></CardHeader>
           <CardContent className="whitespace-pre-wrap text-sm text-muted-foreground">{v.critique}</CardContent>
         </Card>
       )}
+
+      <Card className="mb-4">
+        <CardHeader><CardTitle className="flex items-center gap-2"><Mic className="h-4 w-4" /> Voiceover</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          {voUrlQ.data?.url ? (
+            <>
+              <audio controls src={voUrlQ.data.url} className="w-full" />
+              {v.voiceover_duration_seconds != null && (
+                <p className="text-xs text-muted-foreground">Duration: {Number(v.voiceover_duration_seconds).toFixed(1)}s</p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">No voiceover yet.</p>
+          )}
+          <Button size="sm" onClick={() => voMut.mutate()} disabled={voMut.isPending || !v.refined_script}>
+            {voMut.isPending ? "Generating…" : voUrlQ.data?.url ? "Regenerate voiceover" : "Generate voiceover"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader><CardTitle className="flex items-center gap-2"><Film className="h-4 w-4" /> B-roll clips</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          {clips.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {clips.map((c) => (
+                <a key={`${c.source}-${c.id}`} href={c.url} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded border">
+                  <img src={c.thumbnail} alt={c.query} className="aspect-[9/16] w-full object-cover transition group-hover:scale-105" loading="lazy" />
+                  <div className="p-2 text-xs">
+                    <div className="truncate font-medium">{c.query}</div>
+                    <div className="text-muted-foreground">{c.source} · {c.duration}s</div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No b-roll yet.</p>
+          )}
+          <Button size="sm" onClick={() => brollMut.mutate()} disabled={brollMut.isPending || !v.refined_script}>
+            {brollMut.isPending ? "Searching…" : clips.length > 0 ? "Re-search b-roll" : "Search b-roll"}
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }
