@@ -14,16 +14,203 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      pipeline_runs: {
+        Row: {
+          finished_at: string | null
+          id: string
+          log: string | null
+          started_at: string
+          status: string
+          step: string
+          video_id: string
+        }
+        Insert: {
+          finished_at?: string | null
+          id?: string
+          log?: string | null
+          started_at?: string
+          status: string
+          step: string
+          video_id: string
+        }
+        Update: {
+          finished_at?: string | null
+          id?: string
+          log?: string | null
+          started_at?: string
+          status?: string
+          step?: string
+          video_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_runs_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          email: string | null
+          id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          id?: string
+        }
+        Relationships: []
+      }
+      settings: {
+        Row: {
+          default_description: string
+          default_tags: string[]
+          default_title_template: string
+          id: number
+          niche_prompt: string
+          privacy_status: string
+          schedule_cron: string
+          schedule_enabled: boolean
+          updated_at: string
+          voice_id: string
+        }
+        Insert: {
+          default_description?: string
+          default_tags?: string[]
+          default_title_template?: string
+          id?: number
+          niche_prompt?: string
+          privacy_status?: string
+          schedule_cron?: string
+          schedule_enabled?: boolean
+          updated_at?: string
+          voice_id?: string
+        }
+        Update: {
+          default_description?: string
+          default_tags?: string[]
+          default_title_template?: string
+          id?: number
+          niche_prompt?: string
+          privacy_status?: string
+          schedule_cron?: string
+          schedule_enabled?: boolean
+          updated_at?: string
+          voice_id?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      videos: {
+        Row: {
+          alignment_data: Json | null
+          broll_clips: Json | null
+          created_at: string
+          critique: string | null
+          draft_script: string | null
+          error_log: string | null
+          final_video_url: string | null
+          id: string
+          published_at: string | null
+          refined_script: string | null
+          scheduled_for: string | null
+          status: string
+          thumbnail_url: string | null
+          topic: string | null
+          updated_at: string
+          voiceover_duration_seconds: number | null
+          voiceover_url: string | null
+          youtube_video_id: string | null
+        }
+        Insert: {
+          alignment_data?: Json | null
+          broll_clips?: Json | null
+          created_at?: string
+          critique?: string | null
+          draft_script?: string | null
+          error_log?: string | null
+          final_video_url?: string | null
+          id?: string
+          published_at?: string | null
+          refined_script?: string | null
+          scheduled_for?: string | null
+          status?: string
+          thumbnail_url?: string | null
+          topic?: string | null
+          updated_at?: string
+          voiceover_duration_seconds?: number | null
+          voiceover_url?: string | null
+          youtube_video_id?: string | null
+        }
+        Update: {
+          alignment_data?: Json | null
+          broll_clips?: Json | null
+          created_at?: string
+          critique?: string | null
+          draft_script?: string | null
+          error_log?: string | null
+          final_video_url?: string | null
+          id?: string
+          published_at?: string | null
+          refined_script?: string | null
+          scheduled_for?: string | null
+          status?: string
+          thumbnail_url?: string | null
+          topic?: string | null
+          updated_at?: string
+          voiceover_duration_seconds?: number | null
+          voiceover_url?: string | null
+          youtube_video_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +337,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const
