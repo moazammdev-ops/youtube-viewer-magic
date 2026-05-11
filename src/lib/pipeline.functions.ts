@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { chat } from "./ai-gateway";
+import { createHmac } from "node:crypto";
 
 async function ensureAdmin(ctx: { supabase: any; userId: string }) {
   const { data, error } = await ctx.supabase
@@ -172,6 +173,88 @@ export const rejectVideo = createServerFn({ method: "POST" })
       .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+/** Build the payload sent to the Remotion render host. */
+function buildRenderPayload(video: any, callbackUrl: string) {
+  return {
+    videoId: video.id as string,
+    callbackUrl,
+    script: video.refined_script as string,
+    voiceoverUrl: video.voiceover_url as string,
+    voiceoverDurationSeconds: Number(video.voiceover_duration_seconds ?? 0),
+    alignment: video.alignment_data ?? null,
+    brollClips: video.broll_clips ?? [],
+    width: 1080,
+    height: 1920,
+    fps: 30,
+  };
+}
+
+/** Trigger the external Remotion host to render this video. */
+export const triggerRender = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string().uuid() }).parse)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context);
+    const host = process.env.REMOTION_HOST_URL;
+    const secret = process.env.REMOTION_HOST_SECRET;
+    if (!host || !secret) throw new Error("REMOTION_HOST_URL / REMOTION_HOST_SECRET not configured");
+
+    const { data: video, error } = await context.supabase.from("videos").select("*").eq("id", data.id).single();
+    if (error || !video) throw new Error("Video not found");
+    if (!video.refined_script) throw new Error("Refined script is required");
+    if (!video.voiceover_url) throw new Error("Voiceover is required — generate it first");
+    const clips = (video.broll_clips ?? []) as unknown[];
+    if (!clips.length) throw new Error("B-roll clips are required — search them first");
+
+    // Public callback URL (Lovable preview/published infra serves /api/public/* without auth)
+    const origin = process.env.APP_URL || process.env.SUPABASE_URL?.replace(/\.supabase\.co.*$/, ".lovable.app") || "";
+    const callbackUrl = `${origin}/api/public/render-callback`;
+
+    const payload = buildRenderPayload(video, callbackUrl);
+    const body = JSON.stringify(payload);
+    const signature = createHmac("sha256", secret).update(body).digest("hex");
+
+    await logStep(context.supabase, video.id, "render_dispatch", "running");
+    const res = await fetch(`${host.replace(/\/$/, "")}/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-signature": signature },
+      body,
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      await logStep(context.supabase, video.id, "render_dispatch", "failed", txt);
+      throw new Error(`Render host error ${res.status}: ${txt}`);
+    }
+    const json = (await res.json().catch(() => ({}))) as { jobId?: string };
+
+    await context.supabase
+      .from("videos")
+      .update({ status: "rendering", render_job_id: json.jobId ?? null, error_log: null })
+      .eq("id", video.id);
+    await logStep(context.supabase, video.id, "render_dispatch", "ok", json.jobId ?? "");
+    return { ok: true, jobId: json.jobId ?? null };
+  });
+
+/** Get a signed URL for the final rendered MP4. */
+export const getFinalVideoUrl = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string().uuid() }).parse)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context);
+    const { data: v } = await context.supabase
+      .from("videos")
+      .select("final_video_url")
+      .eq("id", data.id)
+      .single();
+    if (!v?.final_video_url) return { url: null };
+    const path = String(v.final_video_url).replace(/^final-videos\//, "");
+    const { data: signed, error } = await context.supabase.storage
+      .from("final-videos")
+      .createSignedUrl(path, 3600);
+    if (error) throw new Error(error.message);
+    return { url: signed.signedUrl };
   });
 
 export const getSettings = createServerFn({ method: "GET" })
