@@ -73,14 +73,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "YT Helper" },
+      { name: "description", content: "Automates YouTube video creation and view generation using multiple emulators and AI." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "YT Helper" },
+      { property: "og:description", content: "Automates YouTube video creation and view generation using multiple emulators and AI." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "YT Helper" },
+      { name: "twitter:description", content: "Automates YouTube video creation and view generation using multiple emulators and AI." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/3de74a4a-30e7-4152-b47d-debbb0c62a2a/id-preview-cc139095--f89d8675-c3ef-4a3d-bdb2-e998f3fa30ca.lovable.app-1778528707179.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/3de74a4a-30e7-4152-b47d-debbb0c62a2a/id-preview-cc139095--f89d8675-c3ef-4a3d-bdb2-e998f3fa30ca.lovable.app-1778528707179.png" },
     ],
     links: [
       {
