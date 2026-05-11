@@ -2,14 +2,14 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { getVideo, updateRefinedScript, rejectVideo } from "@/lib/pipeline.functions";
+import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl } from "@/lib/pipeline.functions";
 import { generateVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
 import { searchBroll } from "@/lib/broll.functions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Mic, Film } from "lucide-react";
+import { ArrowLeft, Mic, Film, Video as VideoIcon } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/video/$id")({
@@ -26,6 +26,8 @@ function VideoDetail() {
   const genVoice = useServerFn(generateVoiceover);
   const getVoUrl = useServerFn(getVoiceoverUrl);
   const searchClips = useServerFn(searchBroll);
+  const trigRender = useServerFn(triggerRender);
+  const getFinalUrl = useServerFn(getFinalVideoUrl);
 
   const q = useQuery({
     queryKey: ["video", id],
@@ -72,6 +74,21 @@ function VideoDetail() {
       qc.invalidateQueries({ queryKey: ["video", id] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "B-roll failed"),
+  });
+
+  const renderMut = useMutation({
+    mutationFn: () => trigRender({ data: { id } }),
+    onSuccess: () => {
+      toast.success("Render dispatched");
+      qc.invalidateQueries({ queryKey: ["video", id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Render failed"),
+  });
+
+  const finalUrlQ = useQuery({
+    queryKey: ["final-url", id, q.data?.video?.final_video_url],
+    queryFn: () => getFinalUrl({ data: { id } }),
+    enabled: !!q.data?.video?.final_video_url,
   });
 
   const voUrlQ = useQuery({
@@ -176,6 +193,26 @@ function VideoDetail() {
           )}
           <Button size="sm" onClick={() => brollMut.mutate()} disabled={brollMut.isPending || !v.refined_script}>
             {brollMut.isPending ? "Searching…" : clips.length > 0 ? "Re-search b-roll" : "Search b-roll"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader><CardTitle className="flex items-center gap-2"><VideoIcon className="h-4 w-4" /> Final render</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          {finalUrlQ.data?.url ? (
+            <video controls src={finalUrlQ.data.url} className="aspect-[9/16] w-full max-w-xs rounded border bg-black" />
+          ) : v.status === "rendering" ? (
+            <p className="text-sm text-muted-foreground">Rendering on host… this page auto-refreshes.</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">No final video yet.</p>
+          )}
+          <Button
+            size="sm"
+            onClick={() => renderMut.mutate()}
+            disabled={renderMut.isPending || !v.refined_script || !v.voiceover_url || !(clips.length > 0) || v.status === "rendering"}
+          >
+            {renderMut.isPending ? "Dispatching…" : v.status === "rendering" ? "Rendering…" : finalUrlQ.data?.url ? "Re-render" : "Trigger render"}
           </Button>
         </CardContent>
       </Card>
