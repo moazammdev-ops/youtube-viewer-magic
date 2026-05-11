@@ -145,6 +145,7 @@ export type Database = {
           id: string
           published_at: string | null
           refined_script: string | null
+          render_job_id: string | null
           scheduled_for: string | null
           status: string
           thumbnail_url: string | null
@@ -165,6 +166,7 @@ export type Database = {
           id?: string
           published_at?: string | null
           refined_script?: string | null
+          render_job_id?: string | null
           scheduled_for?: string | null
           status?: string
           thumbnail_url?: string | null
@@ -185,6 +187,7 @@ export type Database = {
           id?: string
           published_at?: string | null
           refined_script?: string | null
+          render_job_id?: string | null
           scheduled_for?: string | null
           status?: string
           thumbnail_url?: string | null
