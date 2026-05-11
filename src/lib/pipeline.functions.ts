@@ -208,8 +208,9 @@ export const triggerRender = createServerFn({ method: "POST" })
     const clips = (video.broll_clips ?? []) as unknown[];
     if (!clips.length) throw new Error("B-roll clips are required — search them first");
 
-    // Public callback URL (Lovable preview/published infra serves /api/public/* without auth)
-    const origin = process.env.APP_URL || process.env.SUPABASE_URL?.replace(/\.supabase\.co.*$/, ".lovable.app") || "";
+    // Stable public URL for /api/public/* (Lovable preview/published serves these without auth)
+    const origin =
+      process.env.APP_URL || "https://project--f89d8675-c3ef-4a3d-bdb2-e998f3fa30ca.lovable.app";
     const callbackUrl = `${origin}/api/public/render-callback`;
 
     const payload = buildRenderPayload(video, callbackUrl);
