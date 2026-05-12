@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Mic, Film, Video as VideoIcon } from "lucide-react";
+import { ArrowLeft, Mic, Film, Video as VideoIcon, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/video/$id")({
@@ -32,7 +32,13 @@ function VideoDetail() {
   const q = useQuery({
     queryKey: ["video", id],
     queryFn: () => fetchVideo({ data: { id } }),
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.video?.status;
+      // Poll faster while a render is in flight
+      if (status === "rendering") return 3000;
+      if (status === "generating_script") return 3000;
+      return 8000;
+    },
   });
 
   const [script, setScript] = useState("");
@@ -101,6 +107,11 @@ function VideoDetail() {
   const v = q.data?.video;
   if (!v) return <div className="p-6">Not found</div>;
   const clips = (v.broll_clips ?? []) as Array<{ thumbnail: string; source: string; query: string; duration: number; url: string; id: string }>;
+  const runs = (q.data?.runs ?? []) as Array<{ id: string; step: string; status: string; log: string | null; started_at: string; finished_at: string | null }>;
+  const renderRuns = runs.filter((r) => r.step.startsWith("render"));
+  const isRendering = v.status === "rendering";
+  const lastRenderRun = renderRuns[renderRuns.length - 1];
+  const renderError = lastRenderRun?.status === "failed" ? lastRenderRun.log : null;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -202,11 +213,62 @@ function VideoDetail() {
         <CardContent className="space-y-3">
           {finalUrlQ.data?.url ? (
             <video controls src={finalUrlQ.data.url} className="aspect-[9/16] w-full max-w-xs rounded border bg-black" />
-          ) : v.status === "rendering" ? (
-            <p className="text-sm text-muted-foreground">Rendering on host… this page auto-refreshes.</p>
+          ) : isRendering ? (
+            <div className="flex items-center gap-2 rounded border border-primary/30 bg-primary/5 p-3 text-sm">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <div>
+                <div className="font-medium">Rendering on host…</div>
+                <div className="text-xs text-muted-foreground">
+                  Auto-refreshing every 3s{v.render_job_id ? ` · job ${v.render_job_id}` : ""}
+                </div>
+              </div>
+            </div>
           ) : (
             <p className="text-sm text-muted-foreground">No final video yet.</p>
           )}
+
+          {renderError && (
+            <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+              <div className="mb-1 font-medium">Last render failed</div>
+              <pre className="whitespace-pre-wrap break-words font-mono">{renderError}</pre>
+            </div>
+          )}
+
+          {renderRuns.length > 0 && (
+            <div className="rounded border bg-muted/30 p-3">
+              <div className="mb-2 text-xs font-medium text-muted-foreground">Render activity</div>
+              <ul className="space-y-1.5 text-xs">
+                {renderRuns.slice(-6).reverse().map((r) => {
+                  const Icon =
+                    r.status === "ok" ? CheckCircle2 :
+                    r.status === "failed" ? XCircle :
+                    r.status === "running" ? Loader2 : Clock;
+                  const tone =
+                    r.status === "ok" ? "text-emerald-600" :
+                    r.status === "failed" ? "text-destructive" :
+                    r.status === "running" ? "text-primary" : "text-muted-foreground";
+                  return (
+                    <li key={r.id} className="flex items-start gap-2">
+                      <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone} ${r.status === "running" ? "animate-spin" : ""}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{r.step}</span>
+                          <span className={`uppercase tracking-wide ${tone}`}>{r.status}</span>
+                          <span className="text-muted-foreground">
+                            {new Date(r.started_at).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        {r.log && (
+                          <div className="mt-0.5 truncate text-muted-foreground" title={r.log}>{r.log}</div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
           <Button
             size="sm"
             onClick={() => renderMut.mutate()}
