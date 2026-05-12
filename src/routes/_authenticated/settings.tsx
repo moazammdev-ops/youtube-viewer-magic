@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getSettings, updateSettings } from "@/lib/pipeline.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,8 +32,30 @@ function SettingsPage() {
   const qc = useQueryClient();
   const get = useServerFn(getSettings);
   const update = useServerFn(updateSettings);
-  const q = useQuery({ queryKey: ["settings"], queryFn: () => get() });
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: ["settings"],
+    queryFn: () =>
+      get({
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    enabled: !!accessToken,
+  });
   const [form, setForm] = useState<Form | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setAccessToken(data.session?.access_token ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAccessToken(session?.access_token ?? null);
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (q.data?.settings && !form) {
@@ -57,6 +80,7 @@ function SettingsPage() {
           ...f,
           default_tags: f.default_tags.split(",").map((t) => t.trim()).filter(Boolean),
         },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
       }),
     onSuccess: () => {
       toast.success("Settings saved");
@@ -64,6 +88,14 @@ function SettingsPage() {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
   });
+
+  if (q.isError) {
+    return (
+      <div className="p-6 text-sm text-destructive">
+        Failed to load settings: {q.error instanceof Error ? q.error.message : "Unknown error"}
+      </div>
+    );
+  }
 
   if (!form) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
 

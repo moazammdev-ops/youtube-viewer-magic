@@ -130,7 +130,34 @@ export const listVideos = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) throw new Error(error.message);
-    return { videos: data ?? [] };
+    const videos = data ?? [];
+    const videoIds = videos.map((v) => v.id);
+
+    let runsByVideoId: Record<string, Array<{ step: string; status: string }>> = {};
+    if (videoIds.length > 0) {
+      const { data: runs, error: runsErr } = await context.supabase
+        .from("pipeline_runs")
+        .select("video_id, step, status, started_at")
+        .in("video_id", videoIds)
+        .order("started_at", { ascending: true });
+      if (runsErr) throw new Error(runsErr.message);
+      runsByVideoId = (runs ?? []).reduce(
+        (acc, run) => {
+          const key = String(run.video_id);
+          if (!acc[key]) acc[key] = [];
+          acc[key].push({ step: run.step, status: run.status });
+          return acc;
+        },
+        {} as Record<string, Array<{ step: string; status: string }>>,
+      );
+    }
+
+    return {
+      videos: videos.map((v) => ({
+        ...v,
+        runs: runsByVideoId[v.id] ?? [],
+      })),
+    };
   });
 
 export const getVideo = createServerFn({ method: "POST" })

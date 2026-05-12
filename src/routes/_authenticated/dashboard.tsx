@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { Loader2, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -29,6 +30,42 @@ const STATUS_LABELS: Record<string, { label: string; tone: "default" | "secondar
   rejected: { label: "Rejected", tone: "outline" },
   failed: { label: "Failed", tone: "destructive" },
 };
+
+const PIPELINE_STEPS = [
+  { key: "topic", label: "Topic" },
+  { key: "draft_script", label: "Script draft" },
+  { key: "critique", label: "Script critique" },
+  { key: "refine", label: "Script refine" },
+  { key: "voiceover", label: "Voiceover" },
+  { key: "broll", label: "Video fetching" },
+  { key: "render_dispatch", label: "Render dispatch" },
+  { key: "render", label: "Video generation" },
+] as const;
+
+function getPipelineState(runs: Array<{ step: string; status: string }>) {
+  const byStep = new Map<string, "ok" | "running" | "failed" | "pending">();
+  for (const step of PIPELINE_STEPS) byStep.set(step.key, "pending");
+
+  for (const run of runs) {
+    if (!byStep.has(run.step)) continue;
+    if (run.status === "failed") byStep.set(run.step, "failed");
+    else if (run.status === "running") byStep.set(run.step, "running");
+    else if (run.status === "ok") byStep.set(run.step, "ok");
+  }
+
+  const completed = PIPELINE_STEPS.filter((s) => byStep.get(s.key) === "ok").length;
+  const failed = PIPELINE_STEPS.some((s) => byStep.get(s.key) === "failed");
+  const running = PIPELINE_STEPS.find((s) => byStep.get(s.key) === "running");
+  const nextPending = PIPELINE_STEPS.find((s) => byStep.get(s.key) === "pending");
+
+  return {
+    pct: Math.round((completed / PIPELINE_STEPS.length) * 100),
+    failed,
+    runningLabel: running?.label ?? null,
+    nextLabel: nextPending?.label ?? null,
+    byStep,
+  };
+}
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -140,6 +177,7 @@ function Dashboard() {
         <div className="grid gap-3">
           {videos.map((v) => {
             const s = STATUS_LABELS[v.status] ?? { label: v.status, tone: "outline" as const };
+            const p = getPipelineState((v.runs ?? []) as Array<{ step: string; status: string }>);
             return (
               <Link
                 key={v.id}
@@ -153,6 +191,39 @@ function Dashboard() {
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {new Date(v.created_at).toLocaleString()}
                     </p>
+                    <div className="mt-3">
+                      <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>
+                          {p.failed
+                            ? "Pipeline failed"
+                            : p.runningLabel
+                              ? `In progress: ${p.runningLabel}`
+                              : p.nextLabel
+                                ? `Next: ${p.nextLabel}`
+                                : "Pipeline complete"}
+                        </span>
+                        <span>{p.pct}%</span>
+                      </div>
+                      <Progress value={p.pct} className="h-1.5" />
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {PIPELINE_STEPS.map((step) => {
+                          const state = p.byStep.get(step.key);
+                          const tone =
+                            state === "ok"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : state === "running"
+                                ? "bg-blue-100 text-blue-700"
+                                : state === "failed"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-muted text-muted-foreground";
+                          return (
+                            <span key={step.key} className={`rounded px-1.5 py-0.5 text-[10px] ${tone}`}>
+                              {step.label}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                   <Badge variant={s.tone}>{s.label}</Badge>
                 </div>

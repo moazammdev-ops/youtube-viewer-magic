@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender } from "@/lib/pipeline.functions";
 import { generateVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
 import { searchBroll } from "@/lib/broll.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,10 +32,30 @@ function VideoDetail() {
   const trigRender = useServerFn(triggerRender);
   const getFinalUrl = useServerFn(getFinalVideoUrl);
   const cancelRenderFn = useServerFn(cancelRender);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setAccessToken(data.session?.access_token ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAccessToken(session?.access_token ?? null);
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
   const q = useQuery({
     queryKey: ["video", id],
-    queryFn: () => fetchVideo({ data: { id } }),
+    queryFn: () =>
+      fetchVideo({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    enabled: !!accessToken,
     refetchInterval: (query) => {
       const status = query.state.data?.video?.status;
       // Poll fast during in-flight work; stop entirely once render completes successfully
@@ -51,7 +72,11 @@ function VideoDetail() {
   }, [q.data?.video?.refined_script]);
 
   const save = useMutation({
-    mutationFn: () => updateScript({ data: { id, script } }),
+    mutationFn: () =>
+      updateScript({
+        data: { id, script },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
     onSuccess: () => {
       toast.success("Script updated");
       qc.invalidateQueries({ queryKey: ["video", id] });
@@ -60,7 +85,11 @@ function VideoDetail() {
   });
 
   const rej = useMutation({
-    mutationFn: () => reject({ data: { id } }),
+    mutationFn: () =>
+      reject({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
     onSuccess: () => {
       toast.success("Rejected");
       qc.invalidateQueries({ queryKey: ["video", id] });
@@ -68,7 +97,11 @@ function VideoDetail() {
   });
 
   const voMut = useMutation({
-    mutationFn: () => genVoice({ data: { id } }),
+    mutationFn: () =>
+      genVoice({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
     onSuccess: () => {
       toast.success("Voiceover generated");
       qc.invalidateQueries({ queryKey: ["video", id] });
@@ -78,7 +111,11 @@ function VideoDetail() {
   });
 
   const brollMut = useMutation({
-    mutationFn: () => searchClips({ data: { id } }),
+    mutationFn: () =>
+      searchClips({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
     onSuccess: (r) => {
       toast.success(`Found ${r.count} clips`);
       qc.invalidateQueries({ queryKey: ["video", id] });
@@ -87,7 +124,11 @@ function VideoDetail() {
   });
 
   const renderMut = useMutation({
-    mutationFn: () => trigRender({ data: { id } }),
+    mutationFn: () =>
+      trigRender({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
     onSuccess: () => {
       toast.success("Render dispatched");
       qc.invalidateQueries({ queryKey: ["video", id] });
@@ -96,7 +137,11 @@ function VideoDetail() {
   });
 
   const cancelMut = useMutation({
-    mutationFn: () => cancelRenderFn({ data: { id } }),
+    mutationFn: () =>
+      cancelRenderFn({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
     onSuccess: () => {
       toast.success("Render cancelled");
       qc.invalidateQueries({ queryKey: ["video", id] });
@@ -106,14 +151,22 @@ function VideoDetail() {
 
   const finalUrlQ = useQuery({
     queryKey: ["final-url", id, q.data?.video?.final_video_url],
-    queryFn: () => getFinalUrl({ data: { id } }),
-    enabled: !!q.data?.video?.final_video_url,
+    queryFn: () =>
+      getFinalUrl({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    enabled: !!q.data?.video?.final_video_url && !!accessToken,
   });
 
   const voUrlQ = useQuery({
     queryKey: ["voiceover-url", id, q.data?.video?.voiceover_url],
-    queryFn: () => getVoUrl({ data: { id } }),
-    enabled: !!q.data?.video?.voiceover_url,
+    queryFn: () =>
+      getVoUrl({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    enabled: !!q.data?.video?.voiceover_url && !!accessToken,
   });
 
   // Wall-clock ticker for live elapsed displays. Started here (before any early
