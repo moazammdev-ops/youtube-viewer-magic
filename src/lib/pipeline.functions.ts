@@ -258,6 +258,48 @@ export const getFinalVideoUrl = createServerFn({ method: "POST" })
     return { url: signed.signedUrl };
   });
 
+/** Cancel an in-flight render on the host and mark the video as failed. */
+export const cancelRender = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string().uuid() }).parse)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context);
+    const host = process.env.REMOTION_HOST_URL;
+    const secret = process.env.REMOTION_HOST_SECRET;
+    if (!host || !secret) throw new Error("REMOTION_HOST_URL / REMOTION_HOST_SECRET not configured");
+
+    const { data: video, error } = await context.supabase
+      .from("videos")
+      .select("id, status, render_job_id")
+      .eq("id", data.id)
+      .single();
+    if (error || !video) throw new Error("Video not found");
+    if (video.status !== "rendering") throw new Error("Video is not currently rendering");
+
+    const body = JSON.stringify({ jobId: video.render_job_id ?? null, videoId: video.id });
+    const signature = createHmac("sha256", secret).update(body).digest("hex");
+
+    let hostMsg = "";
+    try {
+      const res = await fetch(`${host.replace(/\/$/, "")}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-signature": signature },
+        body,
+      });
+      hostMsg = `host ${res.status}`;
+      if (!res.ok) hostMsg += `: ${await res.text().catch(() => "")}`;
+    } catch (e) {
+      hostMsg = `host unreachable: ${e instanceof Error ? e.message : String(e)}`;
+    }
+
+    await context.supabase
+      .from("videos")
+      .update({ status: "failed", error_log: `Cancelled by user (${hostMsg})`, render_job_id: null })
+      .eq("id", data.id);
+    await logStep(context.supabase, data.id, "render_cancel", "failed", hostMsg);
+    return { ok: true };
+  });
+
 export const getSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {

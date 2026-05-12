@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl } from "@/lib/pipeline.functions";
+import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender } from "@/lib/pipeline.functions";
 import { generateVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
 import { searchBroll } from "@/lib/broll.functions";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ function VideoDetail() {
   const searchClips = useServerFn(searchBroll);
   const trigRender = useServerFn(triggerRender);
   const getFinalUrl = useServerFn(getFinalVideoUrl);
+  const cancelRenderFn = useServerFn(cancelRender);
 
   const q = useQuery({
     queryKey: ["video", id],
@@ -94,6 +95,15 @@ function VideoDetail() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Render failed"),
   });
 
+  const cancelMut = useMutation({
+    mutationFn: () => cancelRenderFn({ data: { id } }),
+    onSuccess: () => {
+      toast.success("Render cancelled");
+      qc.invalidateQueries({ queryKey: ["video", id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Cancel failed"),
+  });
+
   const finalUrlQ = useQuery({
     queryKey: ["final-url", id, q.data?.video?.final_video_url],
     queryFn: () => getFinalUrl({ data: { id } }),
@@ -106,6 +116,18 @@ function VideoDetail() {
     enabled: !!q.data?.video?.voiceover_url,
   });
 
+  // Wall-clock ticker for live elapsed displays. Started here (before any early
+  // return) to satisfy the rules of hooks.
+  const [now, setNow] = useState(() => Date.now());
+  const runsForTick = (q.data?.runs ?? []) as Array<{ id: string; status: string }>;
+  const anyRunning = runsForTick.some((r) => r.status === "running");
+  const isRenderingForTick = q.data?.video?.status === "rendering";
+  useEffect(() => {
+    if (!anyRunning && !isRenderingForTick) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [anyRunning, isRenderingForTick]);
+
   if (q.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   const v = q.data?.video;
   if (!v) return <div className="p-6">Not found</div>;
@@ -117,19 +139,14 @@ function VideoDetail() {
   const renderError = lastRenderRun?.status === "failed" ? lastRenderRun.log : null;
   const lastRenderFailed = lastRenderRun?.status === "failed";
 
-  // Progress estimate: time elapsed since the most recent render_dispatch start,
-  // vs. an expected total duration (≈ 5× voiceover seconds, min 30s, max 5min).
+  // Progress is derived from the most recent render_dispatch start timestamp
+  // (server-persisted in pipeline_runs). On reload we re-read the same row, so
+  // the estimate naturally resumes from where it left off.
   const dispatchRun = [...renderRuns].reverse().find((r) => r.step === "render_dispatch");
   const expectedSeconds = Math.min(
     300,
     Math.max(30, Math.round(Number(v.voiceover_duration_seconds ?? 45) * 5)),
   );
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!isRendering) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [isRendering]);
   let progressPct = 0;
   if (isRendering && dispatchRun) {
     const elapsed = (now - new Date(dispatchRun.started_at).getTime()) / 1000;
@@ -137,6 +154,12 @@ function VideoDetail() {
   } else if (v.final_video_url) {
     progressPct = 100;
   }
+
+  // Live current step indicator
+  const runningRun = [...runs].reverse().find((r) => r.status === "running");
+  const runningElapsed = runningRun
+    ? Math.max(0, Math.floor((now - new Date(runningRun.started_at).getTime()) / 1000))
+    : 0;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -246,10 +269,25 @@ function VideoDetail() {
                 <span className="ml-auto font-mono text-xs text-muted-foreground">{progressPct}%</span>
               </div>
               <Progress value={progressPct} className="h-2" />
+              {runningRun && (
+                <div className="flex items-center gap-2 text-xs">
+                  <Clock className="h-3 w-3 text-primary" />
+                  <span className="font-mono text-foreground">{runningRun.step}</span>
+                  <span className="text-muted-foreground">running for {runningElapsed}s</span>
+                </div>
+              )}
               <div className="text-xs text-muted-foreground">
                 Est. {expectedSeconds}s total · auto-refreshing every 3s
                 {v.render_job_id ? ` · job ${v.render_job_id}` : ""}
               </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => cancelMut.mutate()}
+                disabled={cancelMut.isPending}
+              >
+                {cancelMut.isPending ? "Cancelling…" : "Cancel render"}
+              </Button>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No final video yet.</p>
