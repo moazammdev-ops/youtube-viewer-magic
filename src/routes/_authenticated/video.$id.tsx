@@ -104,18 +104,6 @@ function VideoDetail() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Cancel failed"),
   });
 
-  // Currently-running pipeline step (for live indicator)
-  const runningRun = [...runs].reverse().find((r) => r.status === "running");
-  const runningElapsed = runningRun
-    ? Math.max(0, Math.floor((now - new Date(runningRun.started_at).getTime()) / 1000))
-    : 0;
-  // Tick once per second whenever any step is running, not only during rendering
-  useEffect(() => {
-    if (!runningRun) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [runningRun?.id]);
-
   const finalUrlQ = useQuery({
     queryKey: ["final-url", id, q.data?.video?.final_video_url],
     queryFn: () => getFinalUrl({ data: { id } }),
@@ -128,6 +116,18 @@ function VideoDetail() {
     enabled: !!q.data?.video?.voiceover_url,
   });
 
+  // Wall-clock ticker for live elapsed displays. Started here (before any early
+  // return) to satisfy the rules of hooks.
+  const [now, setNow] = useState(() => Date.now());
+  const runsForTick = (q.data?.runs ?? []) as Array<{ id: string; status: string }>;
+  const anyRunning = runsForTick.some((r) => r.status === "running");
+  const isRenderingForTick = q.data?.video?.status === "rendering";
+  useEffect(() => {
+    if (!anyRunning && !isRenderingForTick) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [anyRunning, isRenderingForTick]);
+
   if (q.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   const v = q.data?.video;
   if (!v) return <div className="p-6">Not found</div>;
@@ -139,19 +139,14 @@ function VideoDetail() {
   const renderError = lastRenderRun?.status === "failed" ? lastRenderRun.log : null;
   const lastRenderFailed = lastRenderRun?.status === "failed";
 
-  // Progress estimate: time elapsed since the most recent render_dispatch start,
-  // vs. an expected total duration (≈ 5× voiceover seconds, min 30s, max 5min).
+  // Progress is derived from the most recent render_dispatch start timestamp
+  // (server-persisted in pipeline_runs). On reload we re-read the same row, so
+  // the estimate naturally resumes from where it left off.
   const dispatchRun = [...renderRuns].reverse().find((r) => r.step === "render_dispatch");
   const expectedSeconds = Math.min(
     300,
     Math.max(30, Math.round(Number(v.voiceover_duration_seconds ?? 45) * 5)),
   );
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!isRendering) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [isRendering]);
   let progressPct = 0;
   if (isRendering && dispatchRun) {
     const elapsed = (now - new Date(dispatchRun.started_at).getTime()) / 1000;
@@ -159,6 +154,12 @@ function VideoDetail() {
   } else if (v.final_video_url) {
     progressPct = 100;
   }
+
+  // Live current step indicator
+  const runningRun = [...runs].reverse().find((r) => r.status === "running");
+  const runningElapsed = runningRun
+    ? Math.max(0, Math.floor((now - new Date(runningRun.started_at).getTime()) / 1000))
+    : 0;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
