@@ -239,7 +239,7 @@ export const triggerRender = createServerFn({ method: "POST" })
     if (!clips.length) throw new Error("B-roll clips are required — search them first");
 
     // Stable public URL for /api/public/* (Lovable preview/published serves these without auth)
-    const origin = process.env.APP_URL?.trim() || "https://project--f89d8675-c3ef-4a3d-bdb2-e998f3fa30ca.lovable.app";
+    const origin = process.env.APP_URL?.trim() || "https://youtube-viewer-magic.lovable.app";
     if (!/^https?:\/\//.test(origin)) {
       throw new Error("APP_URL must start with http:// or https://");
     }
