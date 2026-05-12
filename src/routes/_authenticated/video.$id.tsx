@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl } from "@/lib/pipeline.functions";
+import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender } from "@/lib/pipeline.functions";
 import { generateVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
 import { searchBroll } from "@/lib/broll.functions";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ function VideoDetail() {
   const searchClips = useServerFn(searchBroll);
   const trigRender = useServerFn(triggerRender);
   const getFinalUrl = useServerFn(getFinalVideoUrl);
+  const cancelRenderFn = useServerFn(cancelRender);
 
   const q = useQuery({
     queryKey: ["video", id],
@@ -93,6 +94,27 @@ function VideoDetail() {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Render failed"),
   });
+
+  const cancelMut = useMutation({
+    mutationFn: () => cancelRenderFn({ data: { id } }),
+    onSuccess: () => {
+      toast.success("Render cancelled");
+      qc.invalidateQueries({ queryKey: ["video", id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Cancel failed"),
+  });
+
+  // Currently-running pipeline step (for live indicator)
+  const runningRun = [...runs].reverse().find((r) => r.status === "running");
+  const runningElapsed = runningRun
+    ? Math.max(0, Math.floor((now - new Date(runningRun.started_at).getTime()) / 1000))
+    : 0;
+  // Tick once per second whenever any step is running, not only during rendering
+  useEffect(() => {
+    if (!runningRun) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [runningRun?.id]);
 
   const finalUrlQ = useQuery({
     queryKey: ["final-url", id, q.data?.video?.final_video_url],
@@ -246,10 +268,25 @@ function VideoDetail() {
                 <span className="ml-auto font-mono text-xs text-muted-foreground">{progressPct}%</span>
               </div>
               <Progress value={progressPct} className="h-2" />
+              {runningRun && (
+                <div className="flex items-center gap-2 text-xs">
+                  <Clock className="h-3 w-3 text-primary" />
+                  <span className="font-mono text-foreground">{runningRun.step}</span>
+                  <span className="text-muted-foreground">running for {runningElapsed}s</span>
+                </div>
+              )}
               <div className="text-xs text-muted-foreground">
                 Est. {expectedSeconds}s total · auto-refreshing every 3s
                 {v.render_job_id ? ` · job ${v.render_job_id}` : ""}
               </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => cancelMut.mutate()}
+                disabled={cancelMut.isPending}
+              >
+                {cancelMut.isPending ? "Cancelling…" : "Cancel render"}
+              </Button>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No final video yet.</p>
