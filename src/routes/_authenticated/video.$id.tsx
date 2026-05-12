@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender } from "@/lib/pipeline.functions";
+import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender, checkRenderHealth } from "@/lib/pipeline.functions";
 import { generateVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
 import { searchBroll } from "@/lib/broll.functions";
 import { supabase } from "@/integrations/supabase/client";
@@ -32,6 +32,7 @@ function VideoDetail() {
   const trigRender = useServerFn(triggerRender);
   const getFinalUrl = useServerFn(getFinalVideoUrl);
   const cancelRenderFn = useServerFn(cancelRender);
+  const checkRenderHealthFn = useServerFn(checkRenderHealth);
   const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
@@ -214,6 +215,30 @@ function VideoDetail() {
     ? Math.max(0, Math.floor((now - new Date(runningRun.started_at).getTime()) / 1000))
     : 0;
 
+  useEffect(() => {
+    if (!isRendering || !accessToken) return;
+    let stopped = false;
+    const t = setInterval(async () => {
+      if (stopped) return;
+      try {
+        const res = await checkRenderHealthFn({
+          data: { id },
+          headers: { authorization: `Bearer ${accessToken}` },
+        });
+        if (res?.stale) {
+          toast.error("Render timed out. Marked as failed.");
+          qc.invalidateQueries({ queryKey: ["video", id] });
+        }
+      } catch {
+        // Best-effort watchdog; main poller continues regardless.
+      }
+    }, 15000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [isRendering, accessToken, checkRenderHealthFn, id, qc]);
+
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
       <Link to="/dashboard" className="mb-6 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -292,7 +317,11 @@ function VideoDetail() {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {clips.map((c) => (
                 <a key={`${c.source}-${c.id}`} href={c.url} target="_blank" rel="noreferrer" className="group block overflow-hidden rounded border">
-                  <img src={c.thumbnail} alt={c.query} className="aspect-[9/16] w-full object-cover transition group-hover:scale-105" loading="lazy" />
+                  {c.thumbnail ? (
+                    <img src={c.thumbnail} alt={c.query} className="aspect-[9/16] w-full object-cover transition group-hover:scale-105" loading="lazy" />
+                  ) : (
+                    <div className="aspect-[9/16] w-full bg-muted" />
+                  )}
                   <div className="p-2 text-xs">
                     <div className="truncate font-medium">{c.query}</div>
                     <div className="text-muted-foreground">{c.source} · {c.duration}s</div>

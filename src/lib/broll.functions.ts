@@ -64,11 +64,15 @@ async function searchPixabay(query: string, apiKey: string): Promise<BrollClip[]
   const json = (await res.json()) as any;
   return (json.hits ?? []).slice(0, 3).map((v: any): BrollClip => {
     const file = v.videos?.medium ?? v.videos?.small ?? v.videos?.tiny;
+    const thumb =
+      typeof v.picture_id === "string" && v.picture_id.trim().length > 0
+        ? `https://i.vimeocdn.com/video/${v.picture_id}_295x166.jpg`
+        : "";
     return {
       source: "pixabay",
       id: String(v.id),
       url: file?.url ?? "",
-      thumbnail: `https://i.vimeocdn.com/video/${v.picture_id}_295x166.jpg`,
+      thumbnail: thumb,
       duration: v.duration ?? 0,
       width: file?.width ?? 0,
       height: file?.height ?? 0,

@@ -332,6 +332,51 @@ export const cancelRender = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+/** Watchdog: mark rendering jobs as failed if callback never completes within timeout. */
+export const checkRenderHealth = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string().uuid() }).parse)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context);
+
+    const { data: video, error } = await context.supabase
+      .from("videos")
+      .select("id, status, final_video_url")
+      .eq("id", data.id)
+      .single();
+    if (error || !video) throw new Error("Video not found");
+    if (video.status !== "rendering" || video.final_video_url) {
+      return { ok: true, stale: false };
+    }
+
+    const { data: runs, error: runsErr } = await context.supabase
+      .from("pipeline_runs")
+      .select("id, step, status, started_at")
+      .eq("video_id", data.id)
+      .eq("step", "render_dispatch")
+      .order("started_at", { ascending: false })
+      .limit(1);
+    if (runsErr) throw new Error(runsErr.message);
+    const latestDispatch = runs?.[0];
+    if (!latestDispatch?.started_at) return { ok: true, stale: false };
+
+    const elapsedMs = Date.now() - new Date(latestDispatch.started_at).getTime();
+    const timeoutMs = 15 * 60 * 1000; // 15 minutes
+    if (elapsedMs < timeoutMs) {
+      return { ok: true, stale: false, elapsedMs };
+    }
+
+    const reason =
+      "Render timed out: callback not received from render host within 15 minutes.";
+    await context.supabase
+      .from("videos")
+      .update({ status: "failed", error_log: reason, render_job_id: null })
+      .eq("id", data.id);
+    await logStep(context.supabase, data.id, "render", "failed", reason);
+
+    return { ok: true, stale: true, reason, elapsedMs };
+  });
+
 export const getSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
