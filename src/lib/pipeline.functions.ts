@@ -29,6 +29,9 @@ export const generateScriptNow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await ensureAdmin(context);
+    if (!process.env.LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
+    }
     const { supabase } = context;
 
     // Load settings
@@ -117,7 +120,7 @@ export const generateScriptNow = createServerFn({ method: "POST" })
     }
   });
 
-export const listVideos = createServerFn({ method: "GET" })
+export const listVideos = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await ensureAdmin(context);
@@ -209,8 +212,10 @@ export const triggerRender = createServerFn({ method: "POST" })
     if (!clips.length) throw new Error("B-roll clips are required — search them first");
 
     // Stable public URL for /api/public/* (Lovable preview/published serves these without auth)
-    const origin =
-      process.env.APP_URL || "https://project--f89d8675-c3ef-4a3d-bdb2-e998f3fa30ca.lovable.app";
+    const origin = process.env.APP_URL?.trim() || "https://project--f89d8675-c3ef-4a3d-bdb2-e998f3fa30ca.lovable.app";
+    if (!/^https?:\/\//.test(origin)) {
+      throw new Error("APP_URL must start with http:// or https://");
+    }
     const callbackUrl = `${origin}/api/public/render-callback`;
 
     const payload = buildRenderPayload(video, callbackUrl);
@@ -328,4 +333,18 @@ export const updateSettings = createServerFn({ method: "POST" })
     const { error } = await context.supabase.from("settings").update(data).eq("id", 1);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+export const getLatestVideo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await ensureAdmin(context);
+    const { data, error } = await context.supabase
+      .from("videos")
+      .select("id, topic, status, created_at")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return { video: data ?? null };
   });

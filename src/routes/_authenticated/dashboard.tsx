@@ -1,12 +1,14 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { generateScriptNow, listVideos } from "@/lib/pipeline.functions";
+import { generateScriptNow, getLatestVideo, listVideos } from "@/lib/pipeline.functions";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Loader2, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — ShortsForge" }] }),
@@ -16,10 +18,11 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 const STATUS_LABELS: Record<string, { label: string; tone: "default" | "secondary" | "destructive" | "outline" }> = {
   queued: { label: "Queued", tone: "outline" },
   generating_script: { label: "Writing script", tone: "secondary" },
-  generating_voice: { label: "Voicing", tone: "secondary" },
+  generating_voiceover: { label: "Voicing", tone: "secondary" },
   searching_broll: { label: "Finding b-roll", tone: "secondary" },
   rendering: { label: "Rendering", tone: "secondary" },
   pending_approval: { label: "Needs review", tone: "default" },
+  pending_publish: { label: "Ready to publish", tone: "default" },
   approved: { label: "Approved", tone: "default" },
   publishing: { label: "Publishing", tone: "secondary" },
   published: { label: "Published", tone: "default" },
@@ -28,20 +31,69 @@ const STATUS_LABELS: Record<string, { label: string; tone: "default" | "secondar
 };
 
 function Dashboard() {
+  const navigate = useNavigate();
   const qc = useQueryClient();
+  const [latestCreatedId, setLatestCreatedId] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const list = useServerFn(listVideos);
+  const latest = useServerFn(getLatestVideo);
   const generate = useServerFn(generateScriptNow);
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setAccessToken(data.session?.access_token ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAccessToken(session?.access_token ?? null);
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  const openReview = (id: string) => {
+    navigate({ to: "/video/$id", params: { id } });
+    setTimeout(() => {
+      if (window.location.pathname !== `/video/${id}`) {
+        window.location.assign(`/video/${id}`);
+      }
+    }, 150);
+  };
 
   const videosQ = useQuery({
     queryKey: ["videos"],
-    queryFn: () => list(),
+    queryFn: () =>
+      list({
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    enabled: !!accessToken,
     refetchInterval: 5000,
   });
 
   const gen = useMutation({
-    mutationFn: () => generate(),
-    onSuccess: () => {
+    mutationFn: () =>
+      generate({
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    onSuccess: async (result) => {
       toast.success("Script generated. Review it now.");
+      if (result?.videoId) {
+        setLatestCreatedId(result.videoId);
+        openReview(result.videoId);
+        return;
+      }
+      const newest = await latest({
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      });
+      const newestId = newest?.video?.id;
+      if (newestId) {
+        setLatestCreatedId(newestId);
+        openReview(newestId);
+      } else {
+        toast.error("Generated, but could not find the video record. Refresh and try again.");
+      }
       qc.invalidateQueries({ queryKey: ["videos"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Generation failed"),
@@ -62,8 +114,22 @@ function Dashboard() {
         </Button>
       </header>
 
+      {latestCreatedId && (
+        <div className="mb-4">
+          <Button variant="outline" size="sm" onClick={() => openReview(latestCreatedId)}>
+            Open latest generated script
+          </Button>
+        </div>
+      )}
+
       {videosQ.isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : videosQ.isError ? (
+        <Card className="border-destructive">
+          <CardContent className="py-6 text-sm text-destructive">
+            Failed to load videos: {videosQ.error instanceof Error ? videosQ.error.message : "Unknown error"}
+          </CardContent>
+        </Card>
       ) : videos.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
