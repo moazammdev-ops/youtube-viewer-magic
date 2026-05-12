@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ArrowLeft, Mic, Film, Video as VideoIcon, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,9 +36,10 @@ function VideoDetail() {
     queryFn: () => fetchVideo({ data: { id } }),
     refetchInterval: (query) => {
       const status = query.state.data?.video?.status;
-      // Poll faster while a render is in flight
+      // Poll fast during in-flight work; stop entirely once render completes successfully
       if (status === "rendering") return 3000;
       if (status === "generating_script") return 3000;
+      if (status === "pending_publish" || status === "published") return false;
       return 8000;
     },
   });
@@ -112,6 +115,28 @@ function VideoDetail() {
   const isRendering = v.status === "rendering";
   const lastRenderRun = renderRuns[renderRuns.length - 1];
   const renderError = lastRenderRun?.status === "failed" ? lastRenderRun.log : null;
+  const lastRenderFailed = lastRenderRun?.status === "failed";
+
+  // Progress estimate: time elapsed since the most recent render_dispatch start,
+  // vs. an expected total duration (≈ 5× voiceover seconds, min 30s, max 5min).
+  const dispatchRun = [...renderRuns].reverse().find((r) => r.step === "render_dispatch");
+  const expectedSeconds = Math.min(
+    300,
+    Math.max(30, Math.round(Number(v.voiceover_duration_seconds ?? 45) * 5)),
+  );
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isRendering) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [isRendering]);
+  let progressPct = 0;
+  if (isRendering && dispatchRun) {
+    const elapsed = (now - new Date(dispatchRun.started_at).getTime()) / 1000;
+    progressPct = Math.min(95, Math.round((elapsed / expectedSeconds) * 100));
+  } else if (v.final_video_url) {
+    progressPct = 100;
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -214,13 +239,16 @@ function VideoDetail() {
           {finalUrlQ.data?.url ? (
             <video controls src={finalUrlQ.data.url} className="aspect-[9/16] w-full max-w-xs rounded border bg-black" />
           ) : isRendering ? (
-            <div className="flex items-center gap-2 rounded border border-primary/30 bg-primary/5 p-3 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <div>
-                <div className="font-medium">Rendering on host…</div>
-                <div className="text-xs text-muted-foreground">
-                  Auto-refreshing every 3s{v.render_job_id ? ` · job ${v.render_job_id}` : ""}
-                </div>
+            <div className="space-y-2 rounded border border-primary/30 bg-primary/5 p-3">
+              <div className="flex items-center gap-2 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <span className="font-medium">Rendering on host…</span>
+                <span className="ml-auto font-mono text-xs text-muted-foreground">{progressPct}%</span>
+              </div>
+              <Progress value={progressPct} className="h-2" />
+              <div className="text-xs text-muted-foreground">
+                Est. {expectedSeconds}s total · auto-refreshing every 3s
+                {v.render_job_id ? ` · job ${v.render_job_id}` : ""}
               </div>
             </div>
           ) : (
@@ -228,9 +256,42 @@ function VideoDetail() {
           )}
 
           {renderError && (
-            <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
-              <div className="mb-1 font-medium">Last render failed</div>
-              <pre className="whitespace-pre-wrap break-words font-mono">{renderError}</pre>
+            <div className="space-y-2 rounded border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+              <div className="font-medium">Last render failed</div>
+              <pre className="line-clamp-2 whitespace-pre-wrap break-words font-mono">{renderError}</pre>
+              <div className="flex flex-wrap gap-2">
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button size="sm" variant="outline">View error details</Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl">
+                    <DialogHeader><DialogTitle>Render failure details</DialogTitle></DialogHeader>
+                    <div className="space-y-3 text-xs">
+                      <div className="grid grid-cols-2 gap-2 rounded border bg-muted/30 p-2 font-mono">
+                        <div><span className="text-muted-foreground">step:</span> {lastRenderRun?.step}</div>
+                        <div><span className="text-muted-foreground">status:</span> {lastRenderRun?.status}</div>
+                        <div><span className="text-muted-foreground">started:</span> {lastRenderRun ? new Date(lastRenderRun.started_at).toLocaleString() : "—"}</div>
+                        <div><span className="text-muted-foreground">finished:</span> {lastRenderRun?.finished_at ? new Date(lastRenderRun.finished_at).toLocaleString() : "—"}</div>
+                        <div className="col-span-2"><span className="text-muted-foreground">run id:</span> {lastRenderRun?.id}</div>
+                        <div className="col-span-2"><span className="text-muted-foreground">job id:</span> {v.render_job_id ?? "—"}</div>
+                      </div>
+                      <div>
+                        <div className="mb-1 font-medium text-foreground">Failure log</div>
+                        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2 font-mono">{lastRenderRun?.log ?? "(no log)"}</pre>
+                      </div>
+                      {v.error_log && v.error_log !== lastRenderRun?.log && (
+                        <div>
+                          <div className="mb-1 font-medium text-foreground">Video error_log</div>
+                          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2 font-mono">{v.error_log}</pre>
+                        </div>
+                      )}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+                <Button size="sm" onClick={() => renderMut.mutate()} disabled={renderMut.isPending}>
+                  {renderMut.isPending ? "Retrying…" : "Retry render"}
+                </Button>
+              </div>
             </div>
           )}
 
@@ -272,9 +333,9 @@ function VideoDetail() {
           <Button
             size="sm"
             onClick={() => renderMut.mutate()}
-            disabled={renderMut.isPending || !v.refined_script || !v.voiceover_url || !(clips.length > 0) || v.status === "rendering"}
+            disabled={renderMut.isPending || !v.refined_script || !v.voiceover_url || !(clips.length > 0) || isRendering}
           >
-            {renderMut.isPending ? "Dispatching…" : v.status === "rendering" ? "Rendering…" : finalUrlQ.data?.url ? "Re-render" : "Trigger render"}
+            {renderMut.isPending ? "Dispatching…" : isRendering ? "Rendering…" : finalUrlQ.data?.url ? "Re-render" : lastRenderFailed ? "Retry render" : "Trigger render"}
           </Button>
         </CardContent>
       </Card>
