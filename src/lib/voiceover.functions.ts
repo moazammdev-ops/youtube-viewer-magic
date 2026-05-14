@@ -22,6 +22,22 @@ async function logStep(supabase: any, videoId: string, step: string, status: str
   });
 }
 
+function mapElevenLabsError(status: number, raw: string) {
+  const text = raw.toLowerCase();
+  const isAbuseBlock =
+    status === 401 &&
+    (text.includes("unusual activity") ||
+      text.includes("free tier usage disabled") ||
+      text.includes("abuse detectors") ||
+      text.includes("proxy/vpn"));
+  if (isAbuseBlock) {
+    return "ElevenLabs blocked this request (unusual activity / Free tier disabled). Use a paid ElevenLabs plan or a clean non-VPN/proxy network, then retry.";
+  }
+  if (status === 401) return "ElevenLabs authentication failed. Verify ELEVENLABS_API_KEY and retry.";
+  if (status === 429) return "ElevenLabs rate limit reached. Wait a moment and retry.";
+  return `ElevenLabs ${status}: ${raw}`;
+}
+
 export const generateVoiceover = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string().uuid() }).parse)
   .middleware([requireSupabaseAuth])
@@ -58,7 +74,11 @@ export const generateVoiceover = createServerFn({ method: "POST" })
           }),
         },
       );
-      if (!res.ok) throw new Error(`ElevenLabs ${res.status}: ${await res.text()}`);
+      if (!res.ok) {
+        const raw = await res.text();
+        const userMsg = mapElevenLabsError(res.status, raw);
+        throw new Error(userMsg);
+      }
       const json = (await res.json()) as {
         audio_base64: string;
         alignment?: { characters: string[]; character_start_times_seconds: number[]; character_end_times_seconds: number[] };
