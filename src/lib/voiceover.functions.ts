@@ -131,3 +131,97 @@ export const getVoiceoverUrl = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { url: signed.signedUrl };
   });
+
+/**
+ * Test-mode voiceover using Google Translate's free TTS endpoint.
+ * Lower quality, no timestamps, but no API key and not rate-limited per account.
+ * Use only to validate the render pipeline when ElevenLabs is unavailable.
+ */
+export const generateTestVoiceover = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string().uuid() }).parse)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context);
+    const { supabase } = context;
+
+    const { data: video, error: vErr } = await supabase
+      .from("videos")
+      .select("id, refined_script")
+      .eq("id", data.id)
+      .single();
+    if (vErr || !video) throw new Error("Video not found");
+    if (!video.refined_script) throw new Error("Refined script missing — generate script first");
+
+    await supabase.from("videos").update({ status: "generating_voiceover" }).eq("id", data.id);
+    await logStep(supabase, data.id, "voiceover", "running", "test mode (google translate tts)");
+
+    try {
+      // Chunk script into <=180-char pieces at sentence/word boundaries.
+      const chunks: string[] = [];
+      const sentences = video.refined_script
+        .replace(/\s+/g, " ")
+        .split(/(?<=[.!?])\s+/);
+      let current = "";
+      for (const s of sentences) {
+        if ((current + " " + s).trim().length <= 180) {
+          current = (current + " " + s).trim();
+        } else {
+          if (current) chunks.push(current);
+          if (s.length <= 180) {
+            current = s;
+          } else {
+            // Hard wrap by words
+            const words = s.split(" ");
+            let buf = "";
+            for (const w of words) {
+              if ((buf + " " + w).trim().length > 180) {
+                if (buf) chunks.push(buf);
+                buf = w;
+              } else {
+                buf = (buf + " " + w).trim();
+              }
+            }
+            current = buf;
+          }
+        }
+      }
+      if (current) chunks.push(current);
+
+      const buffers: Buffer[] = [];
+      for (const chunk of chunks) {
+        const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=en&client=tw-ob`;
+        const res = await fetch(url, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+        });
+        if (!res.ok) throw new Error(`Google TTS ${res.status}: ${await res.text().catch(() => "")}`);
+        buffers.push(Buffer.from(await res.arrayBuffer()));
+      }
+      const audioBuffer = Buffer.concat(buffers);
+
+      const path = `${data.id}/voiceover.mp3`;
+      const { error: upErr } = await supabase.storage
+        .from("voiceovers")
+        .upload(path, audioBuffer, { contentType: "audio/mpeg", upsert: true });
+      if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
+
+      // Google TTS returns ~32 kbps mono MP3. duration ≈ bytes / 4000.
+      const duration = Math.max(1, Math.round((audioBuffer.byteLength / 4000) * 10) / 10);
+
+      await supabase
+        .from("videos")
+        .update({
+          voiceover_url: path,
+          voiceover_duration_seconds: duration,
+          alignment_data: null,
+          status: "pending_approval",
+        })
+        .eq("id", data.id);
+      await logStep(supabase, data.id, "voiceover", "ok", `test mode · ${duration}s · ${chunks.length} chunks`);
+      return { ok: true, duration, chunks: chunks.length };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await supabase.from("videos").update({ status: "failed", error_log: msg }).eq("id", data.id);
+      await logStep(supabase, data.id, "voiceover", "failed", msg);
+      throw e;
+    }
+  });
