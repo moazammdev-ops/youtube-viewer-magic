@@ -3,7 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender, checkRenderHealth } from "@/lib/pipeline.functions";
-import { generateVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
+import { generateVoiceover, generateTestVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
 import { searchBroll } from "@/lib/broll.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ function VideoDetail() {
   const updateScript = useServerFn(updateRefinedScript);
   const reject = useServerFn(rejectVideo);
   const genVoice = useServerFn(generateVoiceover);
+  const genTestVoice = useServerFn(generateTestVoiceover);
   const getVoUrl = useServerFn(getVoiceoverUrl);
   const searchClips = useServerFn(searchBroll);
   const trigRender = useServerFn(triggerRender);
@@ -109,6 +110,20 @@ function VideoDetail() {
       qc.invalidateQueries({ queryKey: ["voiceover-url", id] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Voiceover failed"),
+  });
+
+  const voTestMut = useMutation({
+    mutationFn: () =>
+      genTestVoice({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    onSuccess: () => {
+      toast.success("Test voiceover generated (Google TTS)");
+      qc.invalidateQueries({ queryKey: ["video", id] });
+      qc.invalidateQueries({ queryKey: ["voiceover-url", id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Test voiceover failed"),
   });
 
   const brollMut = useMutation({
@@ -306,6 +321,15 @@ function VideoDetail() {
           )}
           <Button size="sm" onClick={() => voMut.mutate()} disabled={voMut.isPending || !v.refined_script}>
             {voMut.isPending ? "Generating…" : voUrlQ.data?.url ? "Regenerate voiceover" : "Generate voiceover"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => voTestMut.mutate()}
+            disabled={voTestMut.isPending || !v.refined_script}
+            title="Free Google Translate TTS — no key, lower quality, no timestamps. Use to test render pipeline."
+          >
+            {voTestMut.isPending ? "Generating…" : "Test voiceover (free)"}
           </Button>
         </CardContent>
       </Card>
