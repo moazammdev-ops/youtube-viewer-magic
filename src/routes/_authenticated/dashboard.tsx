@@ -1,14 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { generateScriptNow, getLatestVideo, listVideos } from "@/lib/pipeline.functions";
+import { generateScriptNow, getLatestVideo, listVideos, deleteVideo } from "@/lib/pipeline.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -75,6 +75,7 @@ function Dashboard() {
   const list = useServerFn(listVideos);
   const latest = useServerFn(getLatestVideo);
   const generate = useServerFn(generateScriptNow);
+  const deleteVideoFn = useServerFn(deleteVideo);
 
   useEffect(() => {
     let mounted = true;
@@ -134,6 +135,18 @@ function Dashboard() {
       qc.invalidateQueries({ queryKey: ["videos"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Generation failed"),
+  });
+  const del = useMutation({
+    mutationFn: (id: string) =>
+      deleteVideoFn({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    onSuccess: () => {
+      toast.success("Video deleted");
+      qc.invalidateQueries({ queryKey: ["videos"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Delete failed"),
   });
 
   const videos = videosQ.data?.videos ?? [];
@@ -225,7 +238,24 @@ function Dashboard() {
                       </div>
                     </div>
                   </div>
-                  <Badge variant={s.tone}>{s.label}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={s.tone}>{s.label}</Badge>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-7 px-2 text-xs"
+                      disabled={del.isPending}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!window.confirm("Delete this render from the list? This cannot be undone.")) return;
+                        del.mutate(v.id);
+                      }}
+                    >
+                      <Trash2 className="mr-1 h-3 w-3" />
+                      Delete
+                    </Button>
+                  </div>
                 </div>
               </Link>
             );

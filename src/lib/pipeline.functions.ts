@@ -420,3 +420,29 @@ export const getLatestVideo = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { video: data ?? null };
   });
+
+export const deleteVideo = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string().uuid() }).parse)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context);
+    const { data: video, error: videoErr } = await context.supabase
+      .from("videos")
+      .select("id, final_video_url")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (videoErr) throw new Error(videoErr.message);
+    if (!video) throw new Error("Video not found");
+
+    const { error: runsErr } = await context.supabase.from("pipeline_runs").delete().eq("video_id", data.id);
+    if (runsErr) throw new Error(runsErr.message);
+
+    if (video.final_video_url) {
+      const path = String(video.final_video_url).replace(/^final-videos\//, "");
+      await context.supabase.storage.from("final-videos").remove([path]);
+    }
+
+    const { error } = await context.supabase.from("videos").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
