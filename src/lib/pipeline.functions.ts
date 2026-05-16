@@ -290,6 +290,85 @@ export const getFinalVideoUrl = createServerFn({ method: "POST" })
     return { url: signed.signedUrl };
   });
 
+/** Fetch raw logs for a render job from the Remotion host and persist them. */
+export const fetchRenderLogs = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string().uuid() }).parse)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    await ensureAdmin(context);
+    const host = process.env.REMOTION_HOST_URL;
+    const secret = process.env.REMOTION_HOST_SECRET;
+    if (!host || !secret) throw new Error("REMOTION_HOST_URL / REMOTION_HOST_SECRET not configured");
+
+    const { data: video, error } = await context.supabase
+      .from("videos")
+      .select("id, render_job_id")
+      .eq("id", data.id)
+      .single();
+    if (error || !video) throw new Error("Video not found");
+    if (!video.render_job_id) throw new Error("No render job id on this video yet");
+
+    const body = JSON.stringify({ jobId: video.render_job_id, videoId: video.id });
+    const signature = createHmac("sha256", secret).update(body).digest("hex");
+    const base = host.replace(/\/$/, "");
+
+    // Try a few common shapes so this works with whatever the host exposes.
+    const attempts = [
+      { url: `${base}/logs/${encodeURIComponent(video.render_job_id)}`, method: "GET" as const },
+      { url: `${base}/jobs/${encodeURIComponent(video.render_job_id)}`, method: "GET" as const },
+      { url: `${base}/logs`, method: "POST" as const },
+    ];
+
+    let fetched: string | null = null;
+    let lastStatus = "";
+    for (const a of attempts) {
+      try {
+        const res = await fetch(a.url, {
+          method: a.method,
+          headers: {
+            "x-signature": signature,
+            ...(a.method === "POST" ? { "Content-Type": "application/json" } : {}),
+          },
+          body: a.method === "POST" ? body : undefined,
+        });
+        lastStatus = `${a.method} ${a.url} → ${res.status}`;
+        if (res.ok) {
+          const text = await res.text();
+          fetched = text;
+          break;
+        }
+      } catch (e) {
+        lastStatus = `${a.method} ${a.url} → ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+
+    if (fetched == null) {
+      throw new Error(
+        `Render host did not return logs. Last attempt: ${lastStatus}. ` +
+          `Add a GET /logs/:jobId endpoint on the host that returns the captured stderr/stdout.`,
+      );
+    }
+
+    // Pretty-print JSON payloads if the host returns JSON.
+    let pretty = fetched;
+    try {
+      const parsed = JSON.parse(fetched);
+      pretty = typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
+    } catch {
+      /* plain text */
+    }
+
+    await context.supabase.from("pipeline_runs").insert({
+      video_id: video.id,
+      step: "render_logs",
+      status: "ok",
+      log: pretty.slice(0, 50_000),
+      finished_at: new Date().toISOString(),
+    });
+
+    return { logs: pretty, source: lastStatus };
+  });
+
 /** Cancel an in-flight render on the host and mark the video as failed. */
 export const cancelRender = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string().uuid() }).parse)
