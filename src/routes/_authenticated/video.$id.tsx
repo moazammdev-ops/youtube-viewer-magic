@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ArrowLeft, Mic, Film, Video as VideoIcon, Loader2, CheckCircle2, XCircle, Clock, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { PreviewExport } from "@/components/PreviewExport";
 
 export const Route = createFileRoute("/_authenticated/video/$id")({
   head: () => ({ meta: [{ title: "Video — ShortsForge" }] }),
@@ -388,13 +389,42 @@ function VideoDetail() {
       <Card className="mb-4">
         <CardHeader><CardTitle className="flex items-center gap-2"><VideoIcon className="h-4 w-4" /> Final render</CardTitle></CardHeader>
         <CardContent className="space-y-3">
+          {voUrlQ.data?.url && clips.length > 0 && v.refined_script && v.voiceover_duration_seconds && (
+            <div className="rounded border bg-muted/20 p-3">
+              <div className="mb-3 text-xs font-medium text-muted-foreground">
+                In-browser preview & export · {Number(v.voiceover_duration_seconds).toFixed(1)}s · {clips.length} clips
+              </div>
+              <PreviewExport
+                script={v.refined_script}
+                voiceoverUrl={voUrlQ.data.url}
+                voiceoverDurationSeconds={Number(v.voiceover_duration_seconds)}
+                brollClips={clips.map((c) => ({
+                  id: c.id,
+                  url: c.url,
+                  duration: c.duration,
+                  query: c.query,
+                  source: c.source,
+                  thumbnail: c.thumbnail,
+                }))}
+              />
+            </div>
+          )}
+          {(!voUrlQ.data?.url || clips.length === 0 || !v.refined_script) && !finalUrlQ.data?.url && !isRendering && (
+            <p className="text-sm text-muted-foreground">
+              Generate voiceover and b-roll above, then preview & export here.
+            </p>
+          )}
+
           {finalUrlQ.data?.url ? (
-            <video controls src={finalUrlQ.data.url} className="aspect-[9/16] w-full max-w-xs rounded border bg-black" />
+            <div className="space-y-1">
+              <div className="text-xs font-medium text-muted-foreground">Previous server render</div>
+              <video controls src={finalUrlQ.data.url} className="aspect-[9/16] w-full max-w-xs rounded border bg-black" />
+            </div>
           ) : isRendering ? (
             <div className="space-y-2 rounded border border-primary/30 bg-primary/5 p-3">
               <div className="flex items-center gap-2 text-sm">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span className="font-medium">Rendering on host…</span>
+                <span className="font-medium">Legacy server render in progress…</span>
                 <span className="ml-auto font-mono text-xs text-muted-foreground">{progressPct}%</span>
               </div>
               <Progress value={progressPct} className="h-2" />
@@ -418,9 +448,7 @@ function VideoDetail() {
                 {cancelMut.isPending ? "Cancelling…" : "Cancel render"}
               </Button>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No final video yet.</p>
-          )}
+          ) : null}
 
           {renderError && (
             <div className="space-y-2 rounded border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
@@ -480,9 +508,6 @@ function VideoDetail() {
                     </div>
                   </DialogContent>
                 </Dialog>
-                <Button size="sm" onClick={() => renderMut.mutate()} disabled={renderMut.isPending}>
-                  {renderMut.isPending ? "Retrying…" : "Retry render"}
-                </Button>
               </div>
             </div>
           )}
@@ -545,13 +570,6 @@ function VideoDetail() {
             </div>
           )}
 
-          <Button
-            size="sm"
-            onClick={() => renderMut.mutate()}
-            disabled={renderMut.isPending || !v.refined_script || !v.voiceover_url || !(clips.length > 0) || isRendering}
-          >
-            {renderMut.isPending ? "Dispatching…" : isRendering ? "Rendering…" : finalUrlQ.data?.url ? "Re-render" : lastRenderFailed ? "Retry render" : "Trigger render"}
-          </Button>
         </CardContent>
       </Card>
     </div>
