@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender, checkRenderHealth } from "@/lib/pipeline.functions";
+import { getVideo, updateRefinedScript, rejectVideo, triggerRender, getFinalVideoUrl, cancelRender, checkRenderHealth, fetchRenderLogs } from "@/lib/pipeline.functions";
 import { generateVoiceover, generateTestVoiceover, getVoiceoverUrl } from "@/lib/voiceover.functions";
 import { searchBroll } from "@/lib/broll.functions";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, Mic, Film, Video as VideoIcon, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { ArrowLeft, Mic, Film, Video as VideoIcon, Loader2, CheckCircle2, XCircle, Clock, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/video/$id")({
@@ -34,7 +34,10 @@ function VideoDetail() {
   const getFinalUrl = useServerFn(getFinalVideoUrl);
   const cancelRenderFn = useServerFn(cancelRender);
   const checkRenderHealthFn = useServerFn(checkRenderHealth);
+  const fetchLogsFn = useServerFn(fetchRenderLogs);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [hostLogs, setHostLogs] = useState<{ logs: string; source: string } | null>(null);
+  const [hostLogsError, setHostLogsError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -163,6 +166,26 @@ function VideoDetail() {
       qc.invalidateQueries({ queryKey: ["video", id] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Cancel failed"),
+  });
+
+  const logsMut = useMutation({
+    mutationFn: () =>
+      fetchLogsFn({
+        data: { id },
+        headers: accessToken ? { authorization: `Bearer ${accessToken}` } : undefined,
+      }),
+    onSuccess: (r) => {
+      setHostLogs(r);
+      setHostLogsError(null);
+      toast.success("Fetched logs from render host");
+      qc.invalidateQueries({ queryKey: ["video", id] });
+    },
+    onError: (e) => {
+      const msg = e instanceof Error ? e.message : "Could not fetch logs";
+      setHostLogs(null);
+      setHostLogsError(msg);
+      toast.error(msg);
+    },
   });
 
   const finalUrlQ = useQuery({
