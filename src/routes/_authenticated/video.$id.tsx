@@ -452,6 +452,31 @@ function VideoDetail() {
                           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2 font-mono">{v.error_log}</pre>
                         </div>
                       )}
+                      <div className="space-y-2 border-t pt-3">
+                        <div className="flex items-center justify-between">
+                          <div className="font-medium text-foreground">Logs from render host</div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => logsMut.mutate()}
+                            disabled={logsMut.isPending || !v.render_job_id}
+                          >
+                            {logsMut.isPending ? "Fetching…" : hostLogs ? "Refresh" : "Fetch logs"}
+                          </Button>
+                        </div>
+                        {!v.render_job_id && (
+                          <p className="text-muted-foreground">No render job id — nothing to fetch.</p>
+                        )}
+                        {hostLogsError && (
+                          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/40 bg-destructive/5 p-2 font-mono text-destructive">{hostLogsError}</pre>
+                        )}
+                        {hostLogs && (
+                          <>
+                            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2 font-mono">{hostLogs.logs || "(empty)"}</pre>
+                            <div className="text-[10px] text-muted-foreground">source: {hostLogs.source}</div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </DialogContent>
                 </Dialog>
@@ -464,7 +489,30 @@ function VideoDetail() {
 
           {renderRuns.length > 0 && (
             <div className="rounded border bg-muted/30 p-3">
-              <div className="mb-2 text-xs font-medium text-muted-foreground">Render activity</div>
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-xs font-medium text-muted-foreground">Render activity</div>
+                {v.render_job_id && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 gap-1 px-2 text-xs"
+                    onClick={() => logsMut.mutate()}
+                    disabled={logsMut.isPending}
+                  >
+                    <FileText className="h-3 w-3" />
+                    {logsMut.isPending ? "Fetching…" : "Fetch host logs"}
+                  </Button>
+                )}
+              </div>
+              {(hostLogs || hostLogsError) && (
+                <div className="mb-2">
+                  {hostLogsError ? (
+                    <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/40 bg-destructive/5 p-2 font-mono text-[11px] text-destructive">{hostLogsError}</pre>
+                  ) : (
+                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border bg-background p-2 font-mono text-[11px]">{hostLogs!.logs || "(empty)"}</pre>
+                  )}
+                </div>
+              )}
               <ul className="space-y-1.5 text-xs">
                 {renderRuns.slice(-6).reverse().map((r) => {
                   const Icon =
